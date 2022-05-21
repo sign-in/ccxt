@@ -28,10 +28,9 @@ module.exports = class btse extends Exchange {
                 'fetchBidsAsks': false,
                 'fetchClosedOrders': false,
                 'fetchCurrencies': false,
-                'fetchOpenInterestHistory': false,
                 'fetchDepositAddress': true,
                 'fetchDepositAddressesByNetwork': false,
-                'fetchDeposits': false,
+                'fetchDeposits': true,
                 'fetchFundingFees': false,
                 'fetchFundingHistory': false,
                 'fetchFundingRate': false,
@@ -1486,6 +1485,29 @@ module.exports = class btse extends Exchange {
             'network': undefined,
             'info': response,
         };
+    }
+
+    async fetchDeposits (code = undefined, since = undefined, limit = undefined, params = {}) {
+        await this.loadMarkets ();
+        const request = {};
+        if (code !== undefined) {
+            const currency = this.currency (code);
+            request['currency'] = currency;
+        }
+        if (since !== undefined) {
+            request['startTime'] = since;
+        }
+        if (limit !== undefined) {
+            request['count'] = limit;
+        }
+        const [ type, query ] = this.handleMarketTypeAndParams ('fetchDeposits', undefined, params);
+        const method = this.getSupportedMapping (type, {
+            'spot': 'spotPrivateGetUserWalletHistory',
+            'future': 'futurePrivateGetUserWalletHistory',
+            'swap': 'futurePrivateGetUserWalletHistory',
+        });
+        const response = await this[method] (this.extend (request, query));
+        return response;
     }
 
     async transfer (code, amount, fromAccount, toAccount, params = {}) {

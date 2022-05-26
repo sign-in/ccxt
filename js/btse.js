@@ -1133,6 +1133,86 @@ module.exports = class btse extends Exchange {
         }, market);
     }
 
+    parseTransactionType (type) {
+        const types = {
+            'Deposit': 'deposit',
+            'Withdraw': 'withdraw',
+        };
+        return this.safeString (types, type, type);
+    }
+
+    parseTransactionStatus (status) {
+        const statuses = {
+            'Pending': 'pending',
+            'Processing': 'pending',
+            'Completed': 'ok',
+            'Cancelled': 'canceled',
+        };
+        return this.safeString (statuses, status, status);
+    }
+
+    parseTransaction (transaction, currency = undefined) {
+        //
+        // Spot:
+        // [{
+        //   username: 'tiancaidev',
+        //   orderId: '2022052600000015',
+        //   wallet: 'SPOT@',
+        //   currency: 'BTC',
+        //   type: 'Transfer_Out',
+        //   amount: '1.0E-4',
+        //   fees: '0.0',
+        //   description: '',
+        //   timestamp: '1653579720995',
+        //   status: 'Completed',
+        //   txId: '',
+        //   toAddress: '',
+        //   currencyNetwork: '',
+        //   sourceCurrency: '',
+        //   sourceAmount: '0',
+        //   targetCurrency: 'BTC',
+        //   targetAmount: '0.00010',
+        //   rate: '1.0'
+        // }]
+        //
+        const currencyId = this.safeString (transaction, 'currency');
+        const code = this.safeCurrencyCode (currencyId, currency);
+        const created = this.safeInteger (transaction, 'timestamp');
+        const txid = this.safeString (transaction, 'txId', '');
+        const id = this.safeString (transaction, 'id');
+        let addressTo = this.safeString (transaction, 'toAddress', '');
+        if (!addressTo) addressTo = undefined;
+        const type = this.parseTransactionType (this.safeString (transaction, 'type'));
+        const amount = this.safeNumber (transaction, 'amount');
+        const status = this.parseTransactionStatus (this.safeString (transaction, 'status'));
+        const feeCost = this.safeNumber (transaction, 'fees');
+        const rate = this.safeNumber (transaction, 'rate');
+        let fee = undefined;
+        if (feeCost !== undefined) {
+            fee = { 'currency': code, 'cost': feeCost, 'rate': rate };
+        }
+        return {
+            'info': transaction,
+            'id': id,
+            'txid': txid,
+            'timestamp': created,
+            'datetime': this.iso8601 (created),
+            'addressFrom': undefined,
+            'address': addressTo,
+            'addressTo': addressTo,
+            'tagFrom': undefined,
+            'tag': undefined,
+            'tagTo': undefined,
+            'type': type,
+            'amount': amount,
+            'currency': code,
+            'status': status,
+            'updated': undefined,
+            'commented': undefined,
+            'fee': fee,
+        };
+    }
+
     async fetchOpenOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         if (symbol === undefined) {
             throw new ArgumentsRequired (this.id + ' fetchOpenOrders requires a `symbol` argument');
@@ -1500,14 +1580,14 @@ module.exports = class btse extends Exchange {
         if (limit !== undefined) {
             request['count'] = limit;
         }
-        const [ type, query ] = this.handleMarketTypeAndParams ('fetchDeposits', undefined, params);
-        const method = this.getSupportedMapping (type, {
-            'spot': 'spotPrivateGetUserWalletHistory',
-            'future': 'futurePrivateGetUserWalletHistory',
-            'swap': 'futurePrivateGetUserWalletHistory',
-        });
-        const response = await this[method] (this.extend (request, query));
-        return response;
+        const response = await this['spotPrivateGetUserWalletHistory'] (this.extend (request, params));
+        const diposits = [];
+        for (let i = 0; i < response.length; i++) {
+            const diposit = response[i];
+            const type = this.safeString (diposit, 'type');
+            if (type === 'Deposit') diposits.push (diposit);
+        }
+        return this.parseTransactions (diposits);
     }
 
     async transfer (code, amount, fromAccount, toAccount, params = {}) {

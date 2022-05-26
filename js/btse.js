@@ -51,9 +51,10 @@ module.exports = class btse extends Exchange {
                 'fetchTrades': true,
                 'fetchTradingFee': true,
                 'fetchTradingFees': true,
-                'fetchTransactions': false,
+                'fetchTransactions': true,
                 'fetchTransfers': false,
-                'fetchWithdrawals': false,
+                'fetchWithdrawal': true,
+                'fetchWithdrawals': true,
                 'setLeverage': true,
                 'transfer': true,
                 'withdraw': true,
@@ -1567,7 +1568,7 @@ module.exports = class btse extends Exchange {
         };
     }
 
-    async fetchDeposits (code = undefined, since = undefined, limit = undefined, params = {}) {
+    async _fetchTransactions (filters, code = undefined, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
         const request = {};
         if (code !== undefined) {
@@ -1581,13 +1582,27 @@ module.exports = class btse extends Exchange {
             request['count'] = limit;
         }
         const response = await this['spotPrivateGetUserWalletHistory'] (this.extend (request, params));
-        const diposits = [];
+        const transactions = [];
         for (let i = 0; i < response.length; i++) {
-            const diposit = response[i];
-            const type = this.safeString (diposit, 'type');
-            if (type === 'Deposit') diposits.push (diposit);
+            const transaction = response[i];
+            const type = this.safeString (transaction, 'type');
+            if (filters.indexOf (type) >= 0) {
+                transactions.push (transaction);
+            }
         }
-        return this.parseTransactions (diposits);
+        return this.parseTransactions (transactions);
+    }
+
+    async fetchWithdrawals (code = undefined, since = undefined, limit = undefined, params = {}) {
+        return await this._fetchTransactions ([ 'Withdraw' ], code, since, limit, params);
+    }
+
+    async fetchDeposits (code = undefined, since = undefined, limit = undefined, params = {}) {
+        return await this._fetchTransactions ([ 'Deposit' ], code, since, limit, params);
+    }
+
+    async fetchTransactions (code = undefined, since = undefined, limit = undefined, params = {}) {
+        return await this._fetchTransactions ([ 'Withdraw', 'Deposit' ], code, since, limit, params);
     }
 
     async transfer (code, amount, fromAccount, toAccount, params = {}) {

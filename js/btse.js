@@ -42,6 +42,7 @@ module.exports = class btse extends Exchange {
                 'fetchOpenInterestHistory': false,
                 'fetchOpenOrders': true,
                 'fetchOrder': true,
+                'editOrder': true,
                 'fetchOrderBook': true,
                 'fetchOrders': false,
                 'fetchPositions': false,
@@ -689,6 +690,9 @@ module.exports = class btse extends Exchange {
     }
 
     parseTrade (trade, market = undefined) {
+        if (trade['_btseCustomMode'] === 'fetchMyTrades') {
+            return this.parseMyTrade (trade, market);
+        }
         if (!trade.orderid) {
             return this.parsePublicTrade (trade, market);
         }
@@ -737,6 +741,71 @@ module.exports = class btse extends Exchange {
         };
         const type = this.parseOrderType (this.safeString (trade, 'orderType'));
         const cost = this.safeNumber (trade, 'total');
+        return this.safeTrade ({
+            'info': trade,
+            'id': id,
+            'timestamp': timestamp,
+            'datetime': datetime,
+            'symbol': symbol,
+            'order': orderId,
+            'type': type,
+            'side': side,
+            'takerOrMaker': undefined,
+            'price': price,
+            'amount': amount,
+            'cost': cost,
+            'fee': fee,
+        });
+    }
+
+    parseMyTrade (trade, market = undefined) {
+        //
+        //     {
+        //        "tradeId":"6f634cf5-428b-4e03-bfd6-4eafd1ffb462",
+        //        "orderId":"2af14921-5e92-414b-b67a-d39415aae9bb",
+        //        "username":"lima007",
+        //        "side":"BUY",
+        //        "orderType":"77",
+        //        "triggerType":null,
+        //        "price":"0.0",
+        //        "size":"1",
+        //        "filledPrice":"43800.0",
+        //        "filledSize":"1",
+        //        "triggerPrice":"0.0",
+        //        "base":"BTC",
+        //        "quote":"USD",
+        //        "symbol":"BTCM22",
+        //        "feeCurrency":"USD",
+        //        "feeAmount":"0.0219",
+        //        "wallet":"CROSS@",
+        //        "realizedPnl":"0.0",
+        //        "total":"-0.0219",
+        //        "serialId":"5180917",
+        //        "timestamp":"1643639344646",
+        //        "clOrderID":"_wystkl1643639343571",
+        //        "averageFillPrice":"43800.0"
+        //     }
+        //
+        const id = this.safeString (trade, 'tradeId');
+        const orderId = this.safeString (trade, 'orderId');
+        const timestamp = this.safeInteger (trade, 'timestamp');
+        const datetime = this.iso8601 (timestamp);
+        const marketId = this.safeString (trade, 'symbol');
+        const symbol = this.safeSymbol (marketId, market);
+        const side = this.safeStringLower (trade, 'side');
+        const price = this.safeNumber (trade, 'price');
+        const amount = this.safeNumber (trade, 'size');
+        const feeCurrencyId = this.safeString (trade, 'feeCurrency');
+        const feeCurrencyCode = this.safeCurrencyCode (feeCurrencyId);
+        const feeCost = this.safeNumber (trade, 'feeAmount');
+        const fee = {
+            'cost': feeCost,
+            'currency': feeCurrencyCode,
+        };
+        const type = this.parseOrderType (this.safeString (trade, 'orderType'));
+        const filledPrice = this.safeNumber (trade, 'filledPrice');
+        const filledSize = this.safeNumber (trade, 'filledSize');
+        const cost = filledSize * filledPrice;
         return this.safeTrade ({
             'info': trade,
             'id': id,
@@ -1300,8 +1369,14 @@ module.exports = class btse extends Exchange {
         const market = this.market (symbol);
         const request = {
             'symbol': market['id'],
+            // 'includeOld': true,
+            // 'startTime': 1652803200000,
+            // 'endTime': 1653494399000
         };
-        if (since !== undefined) {
+        if (since === undefined) {
+            // default since is before 7 days
+            request.startTime = Date.now () - (7 * 86400 * 1000);
+        } else {
             request['startTime'] = since;
         }
         if (limit !== undefined) {
@@ -1341,7 +1416,49 @@ module.exports = class btse extends Exchange {
         //        "averageFillPrice":"43800.0"
         //     }
         //  ]
-        return this.parseTrades (response, market, since, limit);
+        const newFormatResp = [];
+        for (let i = 0; i < response.length; i++) {
+            const oldResp = response[i];
+            oldResp['_btseCustomMode'] = 'fetchMyTrades';
+            newFormatResp.push (oldResp);
+        }
+        return this.parseTrades (newFormatResp, market, since, limit);
+    }
+
+    async editOrder (id, symbol, type, side, amount, price = undefined, params = {}) {
+        if (symbol === undefined) {
+            throw new ArgumentsRequired (id + ' editOrder requires a `symbol` argument');
+        }
+        await this.loadMarkets ();
+        const market = this.market (symbol);
+        if (!market) {
+            throw new ArgumentsRequired (id + ' symbol not found market');
+        }
+        const request = {
+            'orderID': id,
+            'type': 'ALL',
+            'symbol': market['id'],
+        };
+        if (price !== undefined) {
+            request['orderPrice'] = parseFloat (this.priceToPrecision (symbol, price));
+            request['value'] = request['orderPrice'];
+        }
+        if (amount !== undefined) {
+            request['orderSize'] = parseFloat (this.amountToPrecision (symbol, amount));
+        }
+        const query = this.handleMarketTypeAndParams ('editOrder', market, request)[1];
+        const marketType = market['type'];
+        const method = this.getSupportedMapping (marketType, {
+            'spot': 'spotPrivatePutOrder',
+            'future': 'futurePrivatePutOrder',
+            'swap': 'futurePrivatePutOrder',
+        });
+        const response = await this[method] (this.extend (request, query));
+        if (!response[0] && !response[0]['orderID']) {
+            throw new BadRequest (id + ' edit order failed.');
+        }
+        const lastestOrdersInfo = await this.fetchOpenOrders (symbol, undefined, undefined, { 'orderId': id });
+        return lastestOrdersInfo[0];
     }
 
     async fetchTradingFee (symbol, params = {}) {
@@ -1412,7 +1529,7 @@ module.exports = class btse extends Exchange {
             'symbol': market['id'],
         };
         if (id !== undefined) {
-            request['orderId'] = id;
+            request['orderID'] = id;
         }
         const [ marketType, query ] = this.handleMarketTypeAndParams ('cancelOrder', market, params);
         const method = this.getSupportedMapping (marketType, {
@@ -1605,13 +1722,29 @@ module.exports = class btse extends Exchange {
         const request = {
             'asset': currency['id'],
             'amount': amount,
-            'to': toAccount, // internal account id
+            'toUser': toAccount, // internal account id
         };
         const toUserMail = this.safeString (params, 'toUserMail');
-        if (toUserMail) {
+        if (!toUserMail) {
             throw new ArgumentsRequired (this.id + ' transfer requires a `toUserMail` argument');
         }
-        return await this.spotPrivatePostUserWalletTransfer (this.extend (request, params));
+        request['toUserMail'] = toUserMail;
+        const resp = await this.spotPrivatePostUserWalletTransfer (this.extend (request, params));
+        if (!resp || resp['amount'] === undefined) {
+            throw new BadRequest (' transfer ' + amount + ' ' + currency['id'] + ' to ' + toAccount + 'failed');
+        }
+        const result = {
+            'info': resp,
+            'id': undefined,
+            'timestamp': undefined,
+            'datetime': undefined,
+            'currency': currency['id'],
+            'amount': amount,
+            'fromAccount': undefined,
+            'toAccount': toAccount,
+            'status': 'ok',
+        };
+        return result;
     }
 
     async withdraw (code, amount, address, tag = undefined, params = {}) {
@@ -1643,7 +1776,7 @@ module.exports = class btse extends Exchange {
         const accessibility = api[1];
         const type = api[0];
         let url = this.urls['api'][type] + '/' + path;
-        if (method !== 'POST') {
+        if (!(method === 'POST' || method === 'PUT')) {
             if (Object.keys (params).length) {
                 url += '?' + this.urlencode (params);
             }
@@ -1651,7 +1784,7 @@ module.exports = class btse extends Exchange {
         if (accessibility === 'private') {
             this.checkRequiredCredentials ();
             headers = {};
-            if (method === 'POST') {
+            if (method === 'POST' || method === 'PUT') {
                 body = this.json (params);
                 headers['Content-Type'] = 'application/json';
             }

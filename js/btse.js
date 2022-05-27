@@ -54,7 +54,7 @@ module.exports = class btse extends Exchange {
                 'fetchTradingFees': true,
                 'fetchTransaction': false,
                 'fetchTransactions': true,
-                'fetchTransfers': false,
+                'fetchTransfers': true,
                 'fetchWithdrawal': false,
                 'fetchWithdrawals': true,
                 'setLeverage': true,
@@ -1154,6 +1154,57 @@ module.exports = class btse extends Exchange {
         return this.safeString (statuses, status, status);
     }
 
+    parseTransfer (transfer, currency = undefined) {
+        //
+        // Spot:
+        // [{
+        //   username: 'tiancaidev',
+        //   orderId: '2022052600000015',
+        //   wallet: 'SPOT@',
+        //   currency: 'BTC',
+        //   type: 'Transfer_Out',
+        //   amount: '1.0E-4',
+        //   fees: '0.0',
+        //   description: '',
+        //   timestamp: '1653579720995',
+        //   status: 'Completed',
+        //   txId: '',
+        //   toAddress: '',
+        //   currencyNetwork: '',
+        //   sourceCurrency: '',
+        //   sourceAmount: '0',
+        //   targetCurrency: 'BTC',
+        //   targetAmount: '0.00010',
+        //   rate: '1.0'
+        // }]
+        //
+        const id = this.safeString (transfer, 'orderId');
+        const created = this.safeInteger (transfer, 'timestamp');
+        const currencyId = this.safeString (transfer, 'currency');
+        const code = this.safeCurrencyCode (currencyId, currency);
+        const amount = this.safeNumber (transfer, 'amount');
+        let fromAccount = 'spot';
+        if (this.safeString (transfer, 'type') === 'Transfer_In') {
+            fromAccount = 'future';
+        }
+        let toAccount = 'future';
+        if (fromAccount === 'future') {
+            toAccount = 'spot';
+        }
+        const status = this.parseTransactionStatus (this.safeString (transfer, 'status'));
+        return {
+            'info': transfer,
+            'id': id,
+            'timestamp': created,
+            'datetime': this.iso8601 (created),
+            'currency': code,
+            'amount': amount,
+            'fromAccount': fromAccount,
+            'toAccount': toAccount,
+            'status': status,
+        };
+    }
+
     parseTransaction (transaction, currency = undefined) {
         //
         // Spot:
@@ -1570,7 +1621,7 @@ module.exports = class btse extends Exchange {
         };
     }
 
-    async _fetchTransactions (filters, code = undefined, since = undefined, limit = undefined, params = {}) {
+    async _fetchWalletHistory (filters, code = undefined, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
         const request = {};
         if (code !== undefined) {
@@ -1588,11 +1639,21 @@ module.exports = class btse extends Exchange {
         for (let i = 0; i < response.length; i++) {
             const transaction = response[i];
             const type = this.safeString (transaction, 'type');
-            if (filters.indexOf (type) >= 0) {
+            if (!filters.length || filters.indexOf (type) >= 0) {
                 transactions.push (transaction);
             }
         }
+        return transactions;
+    }
+
+    async _fetchTransactions (filters, code = undefined, since = undefined, limit = undefined, params = {}) {
+        const transactions = await this._fetchWalletHistory (filters, code, since, limit, params);
         return this.parseTransactions (transactions);
+    }
+
+    async fetchTransfers (code = undefined, since = undefined, limit = undefined, params = {}) {
+        const response = await this._fetchWalletHistory ([ 'Transfer_Out', 'Transfer_In' ], code, since, limit, params);
+        return this.parseTransfers (response);
     }
 
     async fetchWithdrawals (code = undefined, since = undefined, limit = undefined, params = {}) {

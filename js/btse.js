@@ -1254,7 +1254,7 @@ module.exports = class btse extends Exchange {
             'currency': code,
             'status': status,
             'updated': undefined,
-            'commented': undefined,
+            'comment': undefined,
             'fee': fee,
         };
     }

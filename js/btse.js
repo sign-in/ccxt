@@ -1271,8 +1271,11 @@ module.exports = class btse extends Exchange {
             'Processing': 'pending',
             'Completed': 'ok',
             'Cancelled': 'canceled',
+            'Expired': 'failed',
+            'User Cancelled': 'canceled',
+            'Check Failed': 'failed',
         };
-        return this.safeString (statuses, status, status);
+        return this.safeString (statuses, status, 'pending');
     }
 
     parseTransfer (transfer, currency = undefined) {

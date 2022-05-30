@@ -55,7 +55,7 @@ module.exports = class btse extends Exchange {
                 'fetchTradingFee': true,
                 'fetchTradingFees': true,
                 'fetchTransaction': false,
-                'fetchTransactions': false,
+                'fetchTransactions': true,
                 'fetchTransfers': true,
                 'fetchWithdrawal': false,
                 'fetchWithdrawals': true,
@@ -1262,7 +1262,7 @@ module.exports = class btse extends Exchange {
     parseTransactionType (type) {
         const types = {
             'Deposit': 'deposit',
-            'Withdraw': 'withdraw',
+            'Withdraw': 'withdrawal',
         };
         return this.safeString (types, type, type);
     }
